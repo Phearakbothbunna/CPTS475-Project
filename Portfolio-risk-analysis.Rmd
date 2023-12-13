@@ -1,0 +1,125 @@
+---
+title: "Portfolio Risk analysis"
+author: "Phearak Both Bunna, Aditya Verma"
+date: "2023-11-13"
+output: html_document
+---
+
+```{r}
+# Import essential libraries
+library(dplyr)
+library(tidyr)
+
+# Read the DJIA stock market datasets
+djia_market_index <- read.csv("DJIAMarketDataApr2016to20193YBeta.csv")
+djia_30_stocks <- read.csv("DJIA_Apr112014_Apr112019.csv")
+
+# Display the top 6 rows
+head(djia_market_index)
+head(djia_30_stocks)
+
+# Calculate daily rate of return on market index
+# Formula: Rt = ((C1 - C0)/C0) * 100
+# C1 is the price at time T1
+# 1st one should be NA
+
+djia_market_index$daily_market_return <- c((diff(djia_market_index$Close)/lag(djia_market_index$Close)) * 100)
+
+# Use join_all to merge the 3 datasets together by Date using inner join 
+# Inner join will only include rows with matching keys in all 3 datasets)
+# Since 2 of the datasets Date start from 2016 and only 1 starts from 2014, the data from 2014 will be excluded
+stock_data <- inner_join(djia_market_index, djia_30_stocks, by = "Date")
+head(stock_data)
+
+# Find any missing values
+total_na <- sum(is.na(stock_data))
+print(total_na)
+
+# We can say that the data is clean and usable now since there are no extra missing values
+# We only expect the data to have one NA for the daily_market_return for the first day
+
+```
+
+
+```{r}
+
+# We want to take the "open, high, low, close, adj.close, volume and daily_market_return" out for now
+# That way it's easier for us to work with the stock_data
+returns_data <- stock_data %>%
+  select(Date, ("AAPL": "XOM"))
+
+# Now we can calculate daily returns of each stock from year 2016 to year 2019
+returns_data <- returns_data %>%
+  mutate(across(("AAPL": "XOM"), ~ (./lag(.) - 1)))
+
+# Tried using na.omit but didn't work for us 
+#na.omit()
+
+# Display the top few rows of the data for us to see 
+head(returns_data)
+```
+
+```{r}
+# We will use this library to create bar graphs for data visualization
+library(ggplot2)
+# Now we can calculate the volatility of the each of the stock (there are 29 stocks in total)
+# Note that volatility is the measure of market fluctuations over time
+volatility <- returns_data %>%
+  summarise(across(("AAPL": "XOM"), sd, na.rm = TRUE)) %>%
+  pivot_longer(cols = everything(), names_to = "Ticker", values_to = "Volatility")
+# Display the top few rows of the data for us to see
+head(volatility)
+
+# We now plot the bar graphs (in orange) for the volatility of each stock within DJIA (Dow Jones Industrial Average)
+ggplot(volatility, aes(x = Ticker, y = Volatility)) +
+  geom_bar(stat = "identity", fill = "orange", width = 0.5) +
+  labs(title = "Volatility by Ticker", x = "Ticker", y = "Volatility") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+
+```{r}
+library(purrr)
+
+# Now we can obtain the market_return values which is in the daily_market_return column in stock_data 
+market_return <- stock_data$daily_market_return
+# We can calculate the beta values which measures the stock's price sensitivity to the whole DJIA stock market movement
+beta <- map_dbl(returns_data %>% select(-Date), ~ {
+  lm_fit <- lm(.x ~ market_return, data = stock_data)
+  summary(lm_fit)$coefficients[2]
+}, .id = "Ticker") %>%
+  tibble(Ticker = colnames(returns_data)[2:ncol(returns_data)], Beta = .)
+# Display the top few rows of the data for us to see 
+head(beta)
+# Now we can plot the beta values in green color so it's easy to visualize 
+ggplot(beta, aes(x = reorder(Ticker, Beta), y = Beta)) +
+  geom_bar(stat = "identity", fill = "green", width = 0.5) +
+  labs(title = "Beta by Ticker", x = "Ticker", y = "Beta") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+```{r}
+
+# Now we will get a separate new_returns_data to use and remove all the NA values using na.omit (which didn't work earlier)
+# Then we can calculate daily returns
+new_returns_data <- stock_data %>%
+  select(Date, ("AAPL": "XOM"))
+
+new_returns_data <- new_returns_data %>%
+  mutate(across(("AAPL": "XOM"), ~ (./lag(.) - 1)))%>%
+  na.omit()
+
+# Then we can calculate the Value at Risk (VaR) which measures the maximum poetential loss on an investment
+# we can assume that it's a normal distribution
+confidence_level <- 0.95
+VaR <- new_returns_data %>%
+  summarise(across(("AAPL": "XOM"), quantile, probs = 1 - confidence_level)) %>%
+  pivot_longer(cols = everything(), names_to = "Ticker", values_to = "VaR")
+# Now we can plot the graph for the Value at Risk associated with each stock in DJIA
+# We decided to use a different color from the 2 graphs above to make it easier to distinguish
+ggplot(VaR, aes(x = Ticker, y = VaR)) +
+  geom_bar(stat = "identity", fill = "red", width = 0.5) +
+  labs(title = "Value at Risk by Ticker", x = "Ticker", y = "Value at Risk") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
